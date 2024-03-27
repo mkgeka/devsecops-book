@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template: Sample template that can be used to  test
+  EC2 updates. **WARNING** This template creates an Amazon Ec2 Instance. You
+  will be  billed for the AWS resources used if you create a stack from this
+  template.
+Parameters:
+  VPC:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 10.10.0.0/16
+  Subnet1:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 10.10.1.0/24
+
+  Subnet2:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 10.10.2.0/24
+
+  Subnet3:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 10.10.3.0/24
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: String
+    Default: prod_key
+    AllowedValues:
+        - prod_key
+        - dev_key
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.nano
+    AllowedValues:
+      - t3.nano
+    ConstraintDescription: must be a valid EC2 instance type.
+Mappings:
+  AWSInstanceType2Arch:
+    t3.nano:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    ca-central-1:
+      HVM64: ami-0ed90a3b5bde5e371
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !Ref VPC
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: cloudx
+ 
+  SubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet1
+      VpcId: !Ref MyVPC
+      AvailabilityZone: "ca-central-1a"
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: public_a
+
+  SubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet2
+      VpcId: !Ref MyVPC
+      AvailabilityZone: "ca-central-1b"
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: public_b
+
+  SubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet3
+      VpcId: !Ref MyVPC
+      AvailabilityZone: "ca-central-1d"
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: public_c
+  myRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: MyVPC
+      Tags:
+        - Key: Name
+          Value: public_rt
+
+  myRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: myRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: myInternetGateway
+
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Env
+          Value: Dev
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref myInternetGateway
+      VpcId: !Ref MyVPC
+
+  SubnetRouteTableAssociationOne:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetOne
+
+  SubnetRouteTableAssociationTwo:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetTwo
+
+  SubnetRouteTableAssociationThree:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetThree
+  BastionSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupDescription: allows access to bastion
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: bastion
+  EC2poolSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupDescription: allows access to ec2 instances
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !Ref BastionSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: !Ref VPC
+        - IpProtocol: tcp
+          FromPort: '2368'
+          ToPort: '2368'
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ec2_pool
+  ALBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupDescription: allows access to alb
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: alb
+  EFSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupDescription: defines access to efs mount points
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          SourceSecurityGroupId: !Ref EC2poolSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: '0'
+          ToPort: '65535'
+          CidrIp: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: efs
+  MyKeyName:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: ghost-ec2-pool
+# Outputs:
