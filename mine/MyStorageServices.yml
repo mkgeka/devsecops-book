@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >-
-  AWS CloudFormation Sample Template: Sample template that can be used to  test
-  EC2 updates. **WARNING** This template creates an Amazon Ec2 Instance. You
-  will be  billed for the AWS resources used if you create a stack from this
-  template.
+  AWS CloudFormation Service storage template
 Parameters:
+  RegionParameter:
+    Type: String
+    Description: "AWS region where the stack is deployed"
   VPC:
     Description: Name of an existing Subnets
     Type: String
@@ -63,6 +63,7 @@ Resources:
       CidrBlock: !Ref Subnet1
       VpcId: !Ref MyVPC
       AvailabilityZone: "ca-central-1a"
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Env
           Value: Dev
@@ -75,6 +76,7 @@ Resources:
       CidrBlock: !Ref Subnet2
       VpcId: !Ref MyVPC
       AvailabilityZone: "ca-central-1b"
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Env
           Value: Dev
@@ -87,6 +89,7 @@ Resources:
       CidrBlock: !Ref Subnet3
       VpcId: !Ref MyVPC
       AvailabilityZone: "ca-central-1d"
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Env
           Value: Dev
@@ -325,4 +328,112 @@ Resources:
       LoadBalancerArn: !Ref MyGhostALB
       Port: 80
       Protocol: HTTP
-# Outputs:
+
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: ghost
+      LaunchTemplateData:
+        ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+        InstanceType: t3.nano           # Replace with your desired instance type
+        KeyName: !Ref MyKeyName
+        SecurityGroupIds:
+          - !Ref EC2poolSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt GhostInstanceProfile.Arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            exec > >(tee /var/log/cloud-init-output.log|logger -t user-data -s 2>/dev/console) 2>&1
+            
+            REGION=${RegionParameter}
+            EFS_ID=$(aws efs describe-file-systems --query 'FileSystems[0].FileSystemId' --output text)
+            LB_DNS_NAME=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[0].DNSName' --output text)
+            
+            ### Install pre-reqs
+            curl -sL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            yum install -y nodejs amazon-efs-utils
+            npm install ghost-cli@latest -g
+            
+            adduser ghost_user
+            usermod -aG wheel ghost_user
+            cd /home/ghost_user/
+            
+            sudo -u ghost_user ghost install [4.12.1] local
+            
+            ### EFS mount
+            mkdir -p /home/ghost_user/ghost/content/data
+            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/ghost/content
+            
+            cat << EOF > config.development.json
+            
+            {
+              "url": "http://$LB_DNS_NAME",
+              "server": {
+                "port": 2368,
+                "host": "0.0.0.0"
+              },
+              "database": {
+                "client": "sqlite3",
+                "connection": {
+                  "filename": "/home/ghost_user/ghost/content/data/ghost-local.db"
+                }
+              },
+              "mail": {
+                "transport": "Direct"
+              },
+              "logging": {
+                "transports": [
+                  "file",
+                  "stdout"
+                ]
+              },
+              "process": "local",
+              "paths": {
+                "contentPath": "/home/ghost_user/ghost/content"
+              }
+            }
+            EOF
+            
+            sudo -u ghost_user ghost stop
+            sudo -u ghost_user ghost start
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: MyEC2Instance
+
+  MyAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: '1'
+      VPCZoneIdentifier:
+        - !Ref SubnetOne
+        - !Ref SubnetTwo
+        - !Ref SubnetThree
+      TargetGroupARNs:
+        - !Ref MyTargetGroup
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '1'
+      AvailabilityZones: !GetAZs ''
+      Tags:
+        - Key: 'Name'
+          Value: 'ghost_ec2_pool'
+          PropagateAtLaunch: 'true'
+
+  MyBastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+      InstanceType: t3.nano  # Specify the instance type (e.g., t3.nano, t3.small, etc.)
+      KeyName: dev_key
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      SubnetId: !Ref SubnetOne
+Outputs:
+  ALBDNSName:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt MyGhostALB.DNSName
