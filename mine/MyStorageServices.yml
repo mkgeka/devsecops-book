@@ -237,4 +237,92 @@ Resources:
       Path: /
       Roles:
         - !Ref GhostRole
+
+  FileSystemResource:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      PerformanceMode: generalPurpose
+      Encrypted: false
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+      FileSystemTags:
+        - Key: Name
+          Value: ghost_content
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action:
+              - "elasticfilesystem:ClientRootAccess"
+              - "elasticfilesystem:ClientMount"
+              - "elasticfilesystem:ClientWrite"
+            Principal: '*'
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: SubnetOne
+      SecurityGroups:
+        - !GetAtt MyVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: SubnetTwo
+      SecurityGroups:
+        - !GetAtt MyVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: SubnetThree
+      SecurityGroups:
+        - !GetAtt MyVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+#
+  MyGhostALB:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Properties:
+        Name: my-alb
+        Scheme: internet-facing
+        Subnets:
+          - !Ref SubnetOne
+          - !Ref SubnetTwo
+          - !Ref SubnetThree
+        SecurityGroups:
+          - !Ref ALBSecurityGroup
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: ghost-ec2
+      Port: 2368
+      Protocol: HTTP
+      VpcId: !Ref MyVPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: 80
+      HealthCheckPath: /
+      TargetType: instance
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60'
+
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+      LoadBalancerArn: !Ref MyGhostALB
+      Port: 80
+      Protocol: HTTP
 # Outputs:
