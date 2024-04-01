@@ -177,6 +177,19 @@ Resources:
       Tags:
         - Key: Name
           Value: ec2_pool
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for SSH access
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Adjust the CIDR block as per your requirements, for example, your IP range
+      Tags:
+        - Key: Name
+          Value: SSHSecurityGroup
   ALBSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -351,7 +364,7 @@ Resources:
             LB_DNS_NAME=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[0].DNSName' --output text)
             
             ### Install pre-reqs
-            curl -sL https://rpm.nodesource.com/setup_20.x | sudo bash -
+            curl -sL https://rpm.nodesource.com/setup_12.x | sudo bash -
             yum install -y nodejs amazon-efs-utils
             npm install ghost-cli@latest -g
             
