@@ -328,7 +328,7 @@ Resources:
       Protocol: HTTP
       VpcId: !Ref MyVPC
       HealthCheckProtocol: HTTP
-      HealthCheckPort: 80
+      HealthCheckPort: 2368
       HealthCheckPath: /
       TargetType: instance
       TargetGroupAttributes:
