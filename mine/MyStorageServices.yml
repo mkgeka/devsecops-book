@@ -459,6 +459,7 @@ Resources:
       SecurityGroupIds:
         - !Ref BastionSecurityGroup
       SubnetId: !Ref SubnetOne
+      IamInstanceProfile: !Ref GhostInstanceProfile
       Tags:
         - Key: 'Name'
           Value: 'BastionHost'
