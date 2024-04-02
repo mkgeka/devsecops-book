@@ -174,6 +174,10 @@ Resources:
           ToPort: '2049'
           CidrIp: !Ref VPC
         - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
           FromPort: '2368'
           ToPort: '2368'
           SourceSecurityGroupId: !Ref ALBSecurityGroup
@@ -328,7 +332,7 @@ Resources:
       Protocol: HTTP
       VpcId: !Ref MyVPC
       HealthCheckProtocol: HTTP
-      HealthCheckPort: 2368
+      HealthCheckPort: 80
       HealthCheckPath: /
       TargetType: instance
       TargetGroupAttributes:
@@ -368,20 +372,24 @@ Resources:
             
             ### Install pre-reqs
             curl -sL https://rpm.nodesource.com/setup_18.x | sudo bash -
-            yum install -y nodejs amazon-efs-utils
+            yum install -y nodejs amazon-efs-utils nginx
             npm install ghost-cli@latest -g
             
             adduser ghost_user
             usermod -aG wheel ghost_user
             cd /home/ghost_user/
-            chown ghost_user:ghost_user -R /home/ghost_user/
             
             sudo -u ghost_user ghost install [5.80.1] local
             
             ### EFS mount
-            mkdir -p /home/ghost_user/content/data
-            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/content
-            
+            mkdir -p /home/ghost_user/ghost/content/data
+            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/ghost/content
+            chown ghost_user:ghost_user -R /home/ghost_user/
+            if [ -f "/home/ghost_user/ghost/content/data/ghost-local.db" ]; then
+                echo "DB file exists"
+            else
+                cp -rp /home/ghost_user/content/data/ /home/ghost_user/ghost/content/data/
+            fi
             cat << EOF > config.development.json
             
             {
@@ -393,7 +401,7 @@ Resources:
               "database": {
                 "client": "sqlite3",
                 "connection": {
-                  "filename": "/home/ghost_user/content/data/ghost-local.db"
+                  "filename": "/home/ghost_user/ghost/content/data/ghost-local.db"
                 }
               },
               "mail": {
@@ -407,13 +415,14 @@ Resources:
               },
               "process": "local",
               "paths": {
-                "contentPath": "/home/ghost_user/content"
+                "contentPath": "/home/ghost_user/ghost/content"
               }
             }
             EOF
             
             sudo -u ghost_user ghost stop
             sudo -u ghost_user ghost start
+            systemctl start nginx
         TagSpecifications:
           - ResourceType: instance
             Tags:
