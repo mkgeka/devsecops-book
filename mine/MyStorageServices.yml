@@ -36,10 +36,13 @@ Parameters:
     Default: t3.nano
     AllowedValues:
       - t3.nano
+      - t3.small
     ConstraintDescription: must be a valid EC2 instance type.
 Mappings:
   AWSInstanceType2Arch:
     t3.nano:
+      Arch: HVM64
+    t3.small:
       Arch: HVM64
   AWSRegionArch2AMI:
     ca-central-1:
@@ -348,7 +351,7 @@ Resources:
       LaunchTemplateName: ghost
       LaunchTemplateData:
         ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
-        InstanceType: t3.nano           # Replace with your desired instance type
+        InstanceType: t3.small           # Replace with your desired instance type
         KeyName: !Ref MyKeyName
         SecurityGroupIds:
           - !Ref EC2poolSecurityGroup
@@ -375,8 +378,8 @@ Resources:
             sudo -u ghost_user ghost install [5.80.1] local
             
             ### EFS mount
-            mkdir -p /home/ghost_user/ghost/content/data
-            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/ghost/content
+            mkdir -p /home/ghost_user/content/data
+            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/content
             
             cat << EOF > config.development.json
             
@@ -389,7 +392,7 @@ Resources:
               "database": {
                 "client": "sqlite3",
                 "connection": {
-                  "filename": "/home/ghost_user/ghost/content/data/ghost-local.db"
+                  "filename": "/home/ghost_user/content/data/ghost-local.db"
                 }
               },
               "mail": {
@@ -403,7 +406,7 @@ Resources:
               },
               "process": "local",
               "paths": {
-                "contentPath": "/home/ghost_user/ghost/content"
+                "contentPath": "/home/ghost_user/content"
               }
             }
             EOF
@@ -446,6 +449,9 @@ Resources:
       SecurityGroupIds:
         - !Ref BastionSecurityGroup
       SubnetId: !Ref SubnetOne
+      Tags:
+        - Key: 'Name'
+          Value: 'BastionHost'
 Outputs:
   ALBDNSName:
     Description: DNS name of the Application Load Balancer
