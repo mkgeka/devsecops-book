@@ -42,7 +42,7 @@
     {"Key":"EksNodeGroupName1","Value":"nodegroup1"},
     {"Key":"EksNodeGroupName2","Value":"nodegroup2"},
     {"Key":"EksNodeGroupName3","Value":"nodegroup3"},
-    {"Key":"S3BucketPath","Value":"https://<your-bucket>.s3.amazonaws.com"},
+    {"Key":"S3BucketPath","Value":"https://mkgeka-devopssec.s3.ca-central-1.amazonaws.com"},
     {"Key":"ZipFileName","Value":"lambda.zip"},
     {"Key":"PublicIP1","Value":"173.36.0.0/14"},
     {"Key":"PublicIP2","Value":"72.163.0.0/16"},

@@ -9,5 +9,5 @@
   { "ParameterKey" : "ProductSupportUrl", "ParameterValue" : "https://www.eksexample.com" },
   { "ParameterKey" : "ArtifactName","ParameterValue" : "EKSIAM" },
   { "ParameterKey" : "ArtifactDescription", "ParameterValue" : "v1.0" },
-  { "ParameterKey" : "ArtifactLoadTemplateFromUrl", "ParameterValue" : "https://s3.amazonaws.com/eksportfolioproducts/iam.yml" }
+  { "ParameterKey" : "ArtifactLoadTemplateFromUrl", "ParameterValue" : "https://mkgeka-devopssec.s3.ca-central-1.amazonaws.com/iam.yml" }
 ]
