@@ -169,7 +169,7 @@ Resources:
                 - ''
                 - - 'arn:aws:iam::'
                   -  Ref: 'AWS::AccountId'
-                  -  ':root'
+                  -  ':user/mkgeka'
             Action:
               - 'sts:AssumeRole'
       Description: "The product role used to launch the Example Product."
