@@ -7,7 +7,7 @@ Parameters:
   S3BucketPath:
     Type: String
     Description: 'S3 Bucket Path With key (e.g. load/files)'
-    Default: 185481568551-us-east-1-infrastructure
+    Default: mkgeka-devopssec.s3.ca-central-1.amazonaws.com
   ZipFileName:
     Type: String
     Description: Name of the zip file to be used by Lambda
