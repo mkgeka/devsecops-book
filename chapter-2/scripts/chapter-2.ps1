@@ -1,5 +1,6 @@
 ###
 aws cloudformation create-stack --template-body file://chapter-2/template/ServiceCatalogPortfolio.yml --stack-name EKSPortfolio --parameters file://chapter-2/parameter/ServiceCatalog.json --capabilities CAPABILITY_NAMED_IAM --region ca-central-1
+#aws cloudformation update-stack --template-body file://chapter-2/template/ServiceCatalogPortfolio.yml --stack-name EKSPortfolio --parameters file://chapter-2/parameter/ServiceCatalog.json --capabilities CAPABILITY_NAMED_IAM --region ca-central-1
 #aws s3 cp chapter-2/product/ s3://mkgeka-devopssec/ --recursive --exclude "*" --include "*.yml" --include "*.zip" --region ca-central-1
 aws cloudformation create-stack --template-body file://chapter-2/template/ServiceCatalogProduct.yml --stack-name EKSNetwork --parameters file://chapter-2/parameter/NetworkProduct.json --region ca-central-1
 aws cloudformation create-stack --template-body file://chapter-2/template/ServiceCatalogProduct.yml --stack-name EKSIAM --parameters file://chapter-2/parameter/IAMProduct.json --region ca-central-1
