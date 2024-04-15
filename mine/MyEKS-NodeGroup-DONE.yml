@@ -72,7 +72,7 @@ Resources:
       AmiType: AL2_x86_64
       ClusterName: EKS
       InstanceTypes:
-        - m5.large
+        - t3.medium
       Labels:
         alpha.eksctl.io/cluster-name: EKS
         alpha.eksctl.io/nodegroup-name: ng-c5e0c90a
