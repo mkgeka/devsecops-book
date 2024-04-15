@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EKS Managed Nodes (SSH access: false) [created by eksctl]'
+Mappings:
+  ServicePrincipalPartitionMap:
+    aws:
+      EC2: ec2.amazonaws.com
+      EKS: eks.amazonaws.com
+      EKSFargatePods: eks-fargate-pods.amazonaws.com
+    aws-cn:
+      EC2: ec2.amazonaws.com.cn
+      EKS: eks.amazonaws.com
+      EKSFargatePods: eks-fargate-pods.amazonaws.com
+    aws-iso:
+      EC2: ec2.c2s.ic.gov
+      EKS: eks.amazonaws.com
+      EKSFargatePods: eks-fargate-pods.amazonaws.com
+    aws-iso-b:
+      EC2: ec2.sc2s.sgov.gov
+      EKS: eks.amazonaws.com
+      EKSFargatePods: eks-fargate-pods.amazonaws.com
+    aws-us-gov:
+      EC2: ec2.amazonaws.com
+      EKS: eks.amazonaws.com
+      EKSFargatePods: eks-fargate-pods.amazonaws.com
+Resources:
+  LaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Iops: 3000
+              Throughput: 125
+              VolumeSize: 80
+              VolumeType: gp3
+        MetadataOptions:
+          HttpPutResponseHopLimit: 2
+          HttpTokens: required
+        SecurityGroupIds:
+          - 'Fn::ImportValue': 'eksctl-EKS-cluster::ClusterSecurityGroupId'
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: EKS-ng-c5e0c90a-Node
+              - Key: alpha.eksctl.io/nodegroup-type
+                Value: managed
+              - Key: alpha.eksctl.io/nodegroup-name
+                Value: ng-c5e0c90a
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: EKS-ng-c5e0c90a-Node
+              - Key: alpha.eksctl.io/nodegroup-type
+                Value: managed
+              - Key: alpha.eksctl.io/nodegroup-name
+                Value: ng-c5e0c90a
+          - ResourceType: network-interface
+            Tags:
+              - Key: Name
+                Value: EKS-ng-c5e0c90a-Node
+              - Key: alpha.eksctl.io/nodegroup-type
+                Value: managed
+              - Key: alpha.eksctl.io/nodegroup-name
+                Value: ng-c5e0c90a
+      LaunchTemplateName:
+        'Fn::Sub': '${AWS::StackName}'
+  ManagedNodeGroup:
+    Type: 'AWS::EKS::Nodegroup'
+    Properties:
+      AmiType: AL2_x86_64
+      ClusterName: EKS
+      InstanceTypes:
+        - m5.large
+      Labels:
+        alpha.eksctl.io/cluster-name: EKS
+        alpha.eksctl.io/nodegroup-name: ng-c5e0c90a
+      LaunchTemplate:
+        Id:
+          Ref: LaunchTemplate
+      NodeRole:
+        'Fn::GetAtt':
+          - NodeInstanceRole
+          - Arn
+      NodegroupName: ng-c5e0c90a
+      ScalingConfig:
+        DesiredSize: 2
+        MaxSize: 2
+        MinSize: 2
+      Subnets:
+        - subnet-0fe1fa993f13f1c0e
+        - subnet-084e7b4090c32116f
+        - subnet-077ba7b096df88187
+      Tags:
+        alpha.eksctl.io/nodegroup-name: ng-c5e0c90a
+        alpha.eksctl.io/nodegroup-type: managed
+  NodeInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - 'Fn::FindInMap':
+                    - ServicePrincipalPartitionMap
+                    - Ref: 'AWS::Partition'
+                    - EC2
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - 'Fn::Sub': >-
+            arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - 'Fn::Sub': 'arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy'
+        - 'Fn::Sub': 'arn:${AWS::Partition}:iam::aws:policy/AmazonEKS_CNI_Policy'
+        - 'Fn::Sub': 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Path: /
+      Tags:
+        - Key: Name
+          Value:
+            'Fn::Sub': '${AWS::StackName}/NodeInstanceRole'
