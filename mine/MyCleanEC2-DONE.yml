@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template: Sample template that can be used to  test
+  EC2 updates. **WARNING** This template creates an Amazon Ec2 Instance. You
+  will be  billed for the AWS resources used if you create a stack from this
+  template.
+Parameters:
+###
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: String
+    Default: dev_key
+    AllowedValues:
+        - dev_key
+###
+###
+  VPC:
+    Description: Name of an existing VPC
+    Type: String
+    Default: vpc-a1cbabc9
+###
+###
+  SubnetId:
+    Description: Name of an existing Subnet
+    Type: String
+    Default: subnet-b78617df
+###
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
+    ConstraintDescription: must be a valid EC2 instance type.
+Mappings:
+  AWSInstanceType2Arch:
+    t3.medium:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    ca-central-1:
+      HVM64: ami-043047d3e14a9b434
+Resources:
+  WebServerInstance:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      Comment: Install a simple PHP application
+      'AWS::CloudFormation::Init':
+        configSets:
+          app_install:
+          - configure
+          - run_apps
+        configure:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack= ${AWS::StackId}
+                region=${AWS::Region}
+                interval=5
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource WebServerInstance --configsets app_install --region ${AWS::Region}
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/environment:
+              content: !Sub |
+                LANG=en_US.utf-8
+                LC_ALL=en_US.utf-8
+              group: root
+              mode: '006440'
+              owner: root
+          commands:
+           update_os:
+              command: "yum update -y"
+              cwd    : "/root/"
+        run_apps:      
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref WEBSecurityGroup
+        - !Ref SSHSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+
+          yum update -y aws-cfn-bootstrap
+
+          # Install the files and packages from the metadata
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerInstance --configsets app_install --region ${AWS::Region}
+            
+          # Start up the cfn-hup daemon to listen for changes to the Web Server metadata           
+          /opt/aws/bin/cfn-hup || error_exit 'Failed to start cfn-hup' 
+           
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: VPC
+  WEBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable WEB access via port 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: VPC
+Outputs:
+  WebsiteURL:
+    Description: Application URL
+    Value: !Sub "http://${WebServerInstance.PublicDnsName}"
