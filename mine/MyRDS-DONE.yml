@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.nano
+    AllowedValues:
+      - t3.nano
+    ConstraintDescription: must be a valid EC2 instance type.
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: String
+    Default: dev_key
+    AllowedValues:
+        - prod_key
+        - dev_key
+  VPC:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.0.0/16
+  Subnet1:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.0.0/24
+
+  Subnet2:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.16.0/24
+
+  Subnet3:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.32.0/24
+
+  DBUser:
+    Description: Name of an existing Subnets
+    Type: String
+
+  DBPassword:
+    Description: Name of an existing Subnets
+    Type: String
+
+  LambdaRoleArn:
+    Type: String
+    Description: The ARN of the lambda role that implements the custom resource
+Mappings:
+  AWSInstanceType2Arch:
+    t3.nano:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    ca-central-1:
+      HVM64: ami-02f754ea50a61080d
+      HVMG2: NOT_SUPPORTED
+Resources:
+  MountTargetVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPC
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: MyVPC
+
+  SubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet1
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: MySubnet
+
+  SubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet2
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1b"
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: MySubnet
+
+  SubnetThree:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet3
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1d"
+      Tags:
+        - Key: Env
+          Value: Dev
+        - Key: Name
+          Value: MySubnet
+
+  myRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: MountTargetVPC
+
+  myRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: myRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: myInternetGateway
+
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Env
+          Value: Dev
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref myInternetGateway
+      VpcId: !Ref MountTargetVPC
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetOne
+
+  RDSServerInstance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+      - RDSSecurityGroup
+      - SSHSecurityGroup
+      - MyDBInstance
+    Metadata:
+      Comment: Install a simple PHP application
+      'AWS::CloudFormation::Init':
+        configSets:
+          app_install:
+          - install_apps
+          - configure
+          - run_apps
+        configure:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack= ${AWS::StackId}
+                region=${AWS::Region}
+                interval=5
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.RDSServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource RDSServerInstance --configsets app_install --region ${AWS::Region}
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/environment:
+              content: !Sub |
+                LANG=en_US.utf-8
+                LC_ALL=en_US.utf-8
+              group: root
+              mode: '006440'
+              owner: root
+          commands:
+           update_os:
+              command: "yum update -y"
+              cwd    : "/root/"
+        install_apps:
+          packages:
+            yum:
+              httpd             : []
+        run_apps:      
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+      InstanceType: !Ref InstanceType
+      SubnetId: !GetAtt SubnetOne.SubnetId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref RDSSecurityGroup
+        - !Ref SSHSecurityGroup
+        - !Ref WebSecurityGroup
+      Tags:
+        - Key: Name
+          Value: RDSServerInstance
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          
+          #Install a LAMP stack
+          amazon-linux-extras enable php7.4
+          yum install -y wget php-mysqli php-json php php-devel
+          yum install -y php-mbstring
+          
+          #Restart the web server
+          systemctl restart httpd
+          
+          #Install the web pages for our lab
+          if [ ! -f /var/www/html/immersion-day-app-php7.zip ]; then
+             cd /var/www/html
+             wget -O 'immersion-day-app-php7.zip' 'https://static.us-east-1.prod.workshops.aws/public/a84f9dfb-12b2-448e-915a-83307f7ac7e0/assets/immersion-day-app-php7.zip'
+             unzip immersion-day-app-php7.zip
+          fi
+          
+          #Install the AWS SDK for PHP
+          if [ ! -f /var/www/html/aws.zip ]; then
+             cd /var/www/html
+             mkdir vendor
+             cd vendor
+             wget https://docs.aws.amazon.com/aws-sdk-php/v3/download/aws.zip
+             unzip aws.zip
+          fi
+          
+          # Update existing packages
+          yum update -y
+
+          yum update -y aws-cfn-bootstrap
+
+          # Install the files and packages from the metadata
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource RDSServerInstance --configsets app_install --region ${AWS::Region}
+            
+          # Start up the cfn-hup daemon to listen for changes to the Web Server metadata           
+          /opt/aws/bin/cfn-hup || error_exit 'Failed to start cfn-hup' 
+           
+          # Signal the status from cfn-init
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource RDSServerInstance --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  EC2InstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+        - Ref: EC2InstanceRole
+        Path: "/"
+      DependsOn: EC2InstanceRole
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SSM-Secrets-Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetSecretValue
+                Resource:
+                  - arn:aws:ssm:*:*:secret:*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - arn:aws:secretsmanager:*:secret:*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: "/"
+
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - SSH Server"
+
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable WEB access via port 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !GetAtt WebSecurityGroup.GroupId
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - DB Tier"
+
+  WebSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - Web Server"
+
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for MySQL RDS instance
+      SubnetIds:
+        - !Ref SubnetOne
+        - !Ref SubnetTwo
+        - !Ref SubnetThree
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: '1000'
+      DBName: awsdb
+      Engine: MySQL
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "03:00-04:00"
+      PreferredMaintenanceWindow: "Sun:04:00-Sun:05:00"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  SSMPRS:
+    Type: Custom::CreateSSMPRS
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt PasswordSetterLambda.Arn
+      Username: !Ref DBUser
+      Password: !Ref DBPassword
+  PasswordSetterLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.lambda_handler'
+      Role: !Ref LambdaRoleArn
+      Runtime: 'python3.8'
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          
+          # Create a Secrets Manager client
+          secretsmanager = boto3.client('secretsmanager')
+          
+          import json
+          
+          secret_name = "mysecret"
+          
+          def lambda_handler(event, context):
+              try:
+                  username = event['ResourceProperties']['Username']
+                  password = event['ResourceProperties']['Password']
+                  db_endpoint = os.environ['DB_ENDPOINT']
+                  db_name = os.environ['DB_NAME']
+          
+                  secret_string = json.dumps({
+                      'username': username,
+                      'password': password,
+                      'host': db_endpoint,
+                      'dbname': db_name,
+                      'port': 3306
+                  })
+                  secretsmanager.create_secret(
+                      Name=secret_name,
+                      Description="RDS database credentials",
+                      SecretString=secret_string
+                  )
+                  # Prepare the response data
+                  response_data = {"Success": "Username and password parameters have been set successfully."}
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as e:
+                  # Prepare the error message
+                  error_message = str(e)
+          
+                  # Send failure response to CloudFormation
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"Message": error_message})
+
+      Environment:
+        Variables:
+          DB_ENDPOINT: !GetAtt MyDBInstance.Endpoint.Address
+          DB_NAME: !GetAtt MyDBInstance.DBName
