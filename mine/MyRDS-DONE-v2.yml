@@ -1,0 +1,655 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+    ConstraintDescription: must be a valid EC2 instance type.
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: String
+    Default: dev_key
+    AllowedValues:
+        - prod_key
+        - dev_key
+  VPC:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.0.0/16
+  Subnet1:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.0.0/24
+
+  Subnet2:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.16.0/24
+
+  Subnet3:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.32.0/24
+
+  Subnet4:
+    Description: Name of an existing Subnets
+    Type: String
+    Default: 172.33.64.0/24
+
+  DBUser:
+    Description: Name of an existing Subnets
+    Type: String
+
+  DBPassword:
+    Description: Name of an existing Subnets
+    Type: String
+
+  LambdaRoleArn:
+    Type: String
+    Description: The ARN of the lambda role that implements the custom resource
+Mappings:
+  AWSInstanceType2Arch:
+    t3.small:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    ca-central-1:
+      HVM64: ami-0ed90a3b5bde5e371
+      HVMG2: NOT_SUPPORTED
+Resources:
+  MountTargetVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MountTargetVPC
+
+  SubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet1
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: MyPublicSubnet_a
+
+  SubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet4
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1b"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: MyPublicSubnet_b
+
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet2
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1b"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: private_db_a
+
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: !Ref Subnet3
+      VpcId: !Ref MountTargetVPC
+      AvailabilityZone: "ca-central-1d"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: private_db_b
+
+  myRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: MountTargetVPC
+
+  myRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: myRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: myInternetGateway
+
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Env
+          Value: Dev
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref myInternetGateway
+      VpcId: !Ref MountTargetVPC
+
+  SubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetOne
+
+  SubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref myRouteTable
+      SubnetId: !Ref SubnetTwo
+
+  MyRDSALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: my-alb
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubnetOne
+        - !Ref SubnetTwo
+      SecurityGroups:
+        - !Ref WebSecurityGroup
+
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: rds-ec2
+      Port: 2368
+      Protocol: HTTP
+      VpcId: !Ref MountTargetVPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: 80
+      HealthCheckPath: /
+      TargetType: instance
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60'
+          
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+      LoadBalancerArn: !Ref MyRDSALB
+      Port: 80
+      Protocol: HTTP
+
+  RDSLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - RDSSecurityGroup
+      - SSHSecurityGroup
+      - MyDBInstance
+    Properties:
+      LaunchTemplateName: RDSLaunchTemplate
+      LaunchTemplateData:
+        KeyName: !Ref KeyName
+        ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch, !Ref InstanceType, Arch]]
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref RDSSecurityGroup
+          - !Ref SSHSecurityGroup
+          - !Ref WebSecurityGroup
+          - !Ref EFSSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            exec > >(tee /var/log/cloud-init-output.log|logger -t user-data -s 2>/dev/console) 2>&1
+            
+            ### Update this to match your ALB DNS name
+            ###
+            SSM_DB_PASSWORD="/ghost/dbpassw"
+            SSM_DB_USER="/ghost/dbuser"
+            SSM_DB_NAME="/ghost/dbname"
+            SSM_DB_URL="/ghost/dburl"
+            SSM_LB_DNS_NAME="/ghost/lb_dns_name"
+            SSM_EFS_ID="/ghost/efs_id"
+            DB_PASSWORD=$(aws ssm get-parameter --name $SSM_DB_PASSWORD --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            LB_DNS_NAME=$(aws ssm get-parameter --name $SSM_LB_DNS_NAME --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            DB_USER=$(aws ssm get-parameter --name $SSM_DB_USER --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            DB_NAME=$(aws ssm get-parameter --name $SSM_DB_NAME --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            DB_URL=$(aws ssm get-parameter --name $SSM_DB_URL --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            EFS_ID=$(aws ssm get-parameter --name $SSM_EFS_ID --query Parameter.Value --with-decryption --region ${AWS::Region} --output text)
+            
+            ### Install pre-reqs
+            curl -sL https://rpm.nodesource.com/setup_18.x | sudo bash -
+            yum install -y nodejs amazon-efs-utils nginx
+            npm install ghost-cli@latest -g
+            
+            adduser ghost_user
+            usermod -aG wheel ghost_user
+            cd /home/ghost_user/
+            
+            sudo -u ghost_user ghost install [5.80.1] local
+            
+            ### EFS mount
+            mkdir -p /home/ghost_user/ghost/content
+            mount -t efs -o tls $EFS_ID:/ /home/ghost_user/ghost/content
+            chown ghost_user:ghost_user -R /home/ghost_user/
+            echo "Test" > /var/www/html/index.html
+            cat << EOF > config.development.json
+            
+            {
+              "url": "http://$LB_DNS_NAME",
+              "server": {
+                "port": 2368,
+                "host": "0.0.0.0"
+              },
+              "database": {
+                "client": "mysql",
+                "connection": {
+                    "host": "$DB_URL",
+                    "port": 3306,
+                    "user": "$DB_USER",
+                    "password": "$DB_PASSWORD",
+                    "database": "$DB_NAME"
+                }
+              },
+              "mail": {
+                "transport": "Direct"
+              },
+              "logging": {
+                "transports": [
+                  "file",
+                  "stdout"
+                ]
+              },
+              "process": "local",
+              "paths": {
+                "contentPath": "/home/ghost_user/ghost/content"
+              }
+            }
+            EOF
+            
+            sudo -u ghost_user ghost stop
+            sudo -u ghost_user ghost start
+            
+            yum update -y
+  
+            yum update -y aws-cfn-bootstrap
+    
+            # Install the files and packages from the metadata
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource RDSServerInstance --configsets app_install --region ${AWS::Region}
+                
+            # Start up the cfn-hup daemon to listen for changes to the Web Server metadata           
+            /opt/aws/bin/cfn-hup || error_exit 'Failed to start cfn-hup' 
+               
+            # Signal the status from cfn-init
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource RDSLaunchTemplate --region ${AWS::Region}
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: RDSServerInstance
+
+  FileSystemResource:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      PerformanceMode: generalPurpose
+      Encrypted: false
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+      FileSystemTags:
+        - Key: Name
+          Value: ghost_content
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action:
+              - "elasticfilesystem:ClientRootAccess"
+              - "elasticfilesystem:ClientMount"
+              - "elasticfilesystem:ClientWrite"
+            Principal: '*'
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: SubnetOne
+      SecurityGroups:
+        - !GetAtt MountTargetVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: PrivateSubnetOne
+      SecurityGroups:
+        - !GetAtt MountTargetVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId:
+        Ref: PrivateSubnetTwo
+      SecurityGroups:
+        - !GetAtt MountTargetVPC.DefaultSecurityGroup
+        - !Ref EFSSecurityGroup
+        
+  EFSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MountTargetVPC
+      GroupDescription: defines access to efs mount points
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          SourceSecurityGroupId: !Ref SSHSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '2368'
+          ToPort: '2368'
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: '0'
+          ToPort: '65535'
+          CidrIp: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: efs
+
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - SSH Server"
+
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable WEB access via port 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !GetAtt WebSecurityGroup.GroupId
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - DB Tier"
+
+  WebSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access via port 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: MountTargetVPC
+      Tags:
+        - Key: Name
+          Value: "Immersion Day - Web Server"
+
+  RDSServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !GetAtt SubnetOne.SubnetId
+      LaunchTemplate:
+        LaunchTemplateId: !Ref RDSLaunchTemplate
+        Version: !GetAtt RDSLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: RDSServerInstance
+
+    Metadata:
+      Comment: Install a simple PHP application
+      'AWS::CloudFormation::Init':
+        configSets:
+          app_install:
+            - install_apps
+            - configure
+            - run_apps
+        configure:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack= ${AWS::StackId}
+                region=${AWS::Region}
+                interval=5
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.RDSServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource RDSServerInstance --configsets app_install --region ${AWS::Region}
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/environment:
+              content: !Sub |
+                LANG=en_US.utf-8
+                LC_ALL=en_US.utf-8
+              group: root
+              mode: '006440'
+              owner: root
+          commands:
+            update_os:
+              command: "yum update -y"
+              cwd: "/root/"
+        install_apps:
+          packages:
+            yum:
+              httpd: [ ]
+        run_apps:
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+
+  EC2InstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles:
+        - Ref: EC2InstanceRole
+        Path: "/"
+      DependsOn: EC2InstanceRole
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SSM-Secrets-Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetSecretValue
+                Resource:
+                  - arn:aws:ssm:*:*:secret:*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - arn:aws:secretsmanager:*:secret:*
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource:
+                  - arn:aws:kms:*:*:key/*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: "/"
+
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for MySQL RDS instance
+      SubnetIds:
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: '1000'
+      DBName: ghost
+      Engine: MySQL
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "03:00-04:00"
+      PreferredMaintenanceWindow: "Sun:04:00-Sun:05:00"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  SSMPRS:
+    Type: Custom::CreateSSMPRS
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt PasswordSetterLambda.Arn
+      Username: !Ref DBUser
+      Password: !Ref DBPassword
+
+  PasswordSetterLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.lambda_handler'
+      Role: !Ref LambdaRoleArn
+      Runtime: 'python3.8'
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import os
+          
+          
+          def lambda_handler(event, context):
+              try:
+                  ssm = boto3.client('ssm')
+          
+                  # Preset credentials to store in SSM Parameter Store
+                  username = event['ResourceProperties']['Username']
+                  password = event['ResourceProperties']['Password']
+                  db_name = os.environ['DB_NAME']
+                  db_url = os.environ['DB_ENDPOINT']
+                  lb_dns_name = os.environ['LB_DNS_NAME']
+                  efs_id = os.environ['EFS_ID']
+          
+                  # Storing username in SSM Parameter Store
+                  ssm.put_parameter(
+                      Name='/ghost/dbuser',
+                      Value=username,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                  # Storing password in SSM Parameter Store
+                  ssm.put_parameter(
+                      Name='/ghost/dbpassw',
+                      Value=password,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                   # Storing dbname in SSM Parameter Store
+                  ssm.put_parameter(
+                      Name='/ghost/dbname',
+                      Value=db_name,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                   # Storing dbname in SSM Parameter Store
+                  ssm.put_parameter(
+                      Name='/ghost/dburl',
+                      Value=db_url,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                  ssm.put_parameter(
+                      Name='/ghost/lb_dns_name',
+                      Value=lb_dns_name,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                  ssm.put_parameter(
+                      Name='/ghost/efs_id',
+                      Value=efs_id,
+                      Type='SecureString',
+                      Overwrite=True
+                  )
+          
+                  # Prepare the response data
+                  response_data = {"Success": "Username and password parameters have been set successfully."}
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as e:
+                  # Prepare the error message
+                  error_message = str(e)
+          
+                  # Send failure response to CloudFormation
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"Message": error_message})
+
+      Environment:
+        Variables:
+          DB_ENDPOINT: !GetAtt MyDBInstance.Endpoint.Address
+          DB_NAME: !GetAtt MyDBInstance.DBName
+          LB_DNS_NAME: !GetAtt MyRDSALB.DNSName
+          EFS_ID: !GetAtt FileSystemResource.FileSystemId
